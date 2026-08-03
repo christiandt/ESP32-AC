@@ -53,3 +53,16 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/
+
+# Python tooling
+__pycache__/
+*.pyc
+
+# Provisioning blobs contain WiFi + Midea credentials
+provisioning*.json
