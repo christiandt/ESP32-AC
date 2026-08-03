@@ -69,6 +69,30 @@ void test_discovery_response_parsing(void);
 void test_discovery_rejects_short_response(void);
 void test_mac_byte_order_roundtrip(void);
 
+// Defined in test_midea.cpp.
+void test_frame_checksum(void);
+void test_frame_roundtrip_validates(void);
+void test_frame_rejects_corruption(void);
+void test_get_state_frame(void);
+void test_toggle_display_frame(void);
+void test_set_state_cool_22(void);
+void test_set_state_heat_25_5_all_flags(void);
+void test_set_state_uses_alternate_temperature(void);
+void test_command_frame_rejects_small_buffer(void);
+void test_parse_state_frame(void);
+void test_parse_state_rejects_bad_payload_crc(void);
+void test_parse_state_rejects_wrong_response_id(void);
+void test_parse_state_rejects_truncated(void);
+void test_v2_header(void);
+void test_v2_parse(void);
+void test_v2_parse_rejects_truncated_and_bad_start(void);
+void test_v3_pad_for(void);
+void test_v3_encrypted_request_header(void);
+void test_v3_handshake_request_header(void);
+void test_v3_header_is_big_endian(void);
+void test_v3_parse_header(void);
+void test_v3_parse_header_rejects_bad_magic(void);
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -98,6 +122,33 @@ int main(int, char**) {
   RUN_TEST(test_discovery_response_parsing);
   RUN_TEST(test_discovery_rejects_short_response);
   RUN_TEST(test_mac_byte_order_roundtrip);
+
+  RUN_TEST(test_frame_checksum);
+  RUN_TEST(test_frame_roundtrip_validates);
+  RUN_TEST(test_frame_rejects_corruption);
+
+  RUN_TEST(test_get_state_frame);
+  RUN_TEST(test_toggle_display_frame);
+  RUN_TEST(test_set_state_cool_22);
+  RUN_TEST(test_set_state_heat_25_5_all_flags);
+  RUN_TEST(test_set_state_uses_alternate_temperature);
+  RUN_TEST(test_command_frame_rejects_small_buffer);
+
+  RUN_TEST(test_parse_state_frame);
+  RUN_TEST(test_parse_state_rejects_bad_payload_crc);
+  RUN_TEST(test_parse_state_rejects_wrong_response_id);
+  RUN_TEST(test_parse_state_rejects_truncated);
+
+  RUN_TEST(test_v2_header);
+  RUN_TEST(test_v2_parse);
+  RUN_TEST(test_v2_parse_rejects_truncated_and_bad_start);
+
+  RUN_TEST(test_v3_pad_for);
+  RUN_TEST(test_v3_encrypted_request_header);
+  RUN_TEST(test_v3_handshake_request_header);
+  RUN_TEST(test_v3_header_is_big_endian);
+  RUN_TEST(test_v3_parse_header);
+  RUN_TEST(test_v3_parse_header_rejects_bad_magic);
 
   return UNITY_END();
 }

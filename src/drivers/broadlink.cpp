@@ -200,7 +200,7 @@ bool BroadlinkTransport::sendPacketLocked(uint16_t packet_type, const uint8_t* p
   // Zero padding, not PKCS7 — broadlink appends plain zero bytes.
   memset(scratch_, 0, padded);
   memcpy(scratch_, payload, payload_len);
-  if (!crypto::aesCbcEncrypt(key_, kInitVect, scratch_, padded, tx_ + kOuterHeaderLen)) {
+  if (!crypto::aesCbcEncrypt(key_, sizeof(key_), kInitVect, scratch_, padded, tx_ + kOuterHeaderLen)) {
     setError("AES encrypt failed");
     return false;
   }
@@ -231,7 +231,7 @@ bool BroadlinkTransport::sendPacketLocked(uint16_t packet_type, const uint8_t* p
     return false;
   }
 
-  if (!crypto::aesCbcDecrypt(key_, kInitVect, rx_ + kOuterHeaderLen, cipher_len, out)) {
+  if (!crypto::aesCbcDecrypt(key_, sizeof(key_), kInitVect, rx_ + kOuterHeaderLen, cipher_len, out)) {
     setError("AES decrypt failed");
     return false;
   }

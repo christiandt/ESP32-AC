@@ -8,16 +8,14 @@
 #include "ac_registry.h"
 #include "config_store.h"
 #include "drivers/electrolux.h"
+#include "drivers/midea.h"
 #include "drivers/mock.h"
 #include "rest_api.h"
+#include "selftest.h"
 
 using namespace acbridge;
 
 namespace {
-
-// The Midea unit is still a mock until phase 3; its id and name are already the
-// final ones so the REST shape doesn't change when the real driver lands.
-MockDriver g_midea_mock("midea", "Midea Porta Split");
 
 constexpr uint32_t kWifiTimeoutMs = 20000;
 constexpr const char* kApSsid = "esp32-ac-setup";
@@ -44,7 +42,14 @@ bool connectWifi(const WifiConfig& wifi) {
 // Drivers are built from stored config, so they outlive setup() and are
 // allocated once here rather than being globals that can't see the config.
 void registerDrivers(const Config& cfg) {
-  g_registry.add(&g_midea_mock);
+  if (cfg.midea.enabled && cfg.midea.ip[0] != '\0') {
+    g_registry.add(new MideaDriver(cfg.midea));
+    Serial.printf("Midea at %s (%s)\n", cfg.midea.ip, cfg.midea.isV3() ? "V3" : "V2");
+  } else {
+    // Keep the unit present so the REST surface is stable, just obviously fake.
+    g_registry.add(new MockDriver("midea", "Midea (unconfigured)"));
+    Serial.println("Midea not configured — using a mock");
+  }
 
   if (cfg.electrolux.enabled && cfg.electrolux.ip[0] != '\0') {
     g_registry.add(new ElectroluxDriver(cfg.electrolux));
@@ -75,6 +80,8 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\nESP32-AC starting");
+
+  runSelfTest();
 
   const bool provisioned = g_config.begin();
   const Config& cfg = g_config.get();

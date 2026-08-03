@@ -7,7 +7,11 @@ REST API — and, from phase 4, as native HomeKit accessories in Apple Home.
 Both units are already on the network, so this board is not a radio bridge. Its job is to be the one
 always-on device in the house: it keeps the sessions alive, normalises two very different vendor
 protocols into one vocabulary, and speaks HomeKit so no Home Assistant or Homebridge install is
-needed.
+needed. The two units remain independent throughout, and appear in Apple Home as two separate
+accessories.
+
+One board handles both. Unlike an IR blaster this needs no proximity or line-of-sight to either AC —
+both are reached over the LAN through the router — so the board can sit anywhere with decent WiFi.
 
 | Unit | Protocol | Reference implementation |
 |---|---|---|
@@ -23,11 +27,11 @@ This firmware is a port of their wire protocols to C++; neither repo is modified
 |---|---|---|
 | 1 | Skeleton, task model, REST API, provisioning, native test harness | **done** |
 | 2 | Electrolux / Broadlink driver | **done** (status schema needs confirming — see below) |
-| 3 | Midea LAN V3 driver | not started |
+| 3 | Midea LAN V3 driver | **done** |
 | 4 | HomeKit via HomeSpan | not started |
 
-The Midea unit is still a `MockDriver` under its final id, so the REST shape won't change when the
-real driver lands. The Electrolux falls back to a mock too if it isn't configured.
+Either unit falls back to a `MockDriver` under its final id if it isn't configured, so the REST shape
+is the same whether or not hardware is attached.
 
 ### Confirming the Electrolux status schema
 
@@ -77,9 +81,27 @@ test/test_proto/        native unit tests
 tools/export_config.py  builds the provisioning blob from the Python CLIs' cached config
 ```
 
-`src/proto/` is deliberately free of Arduino and ESP-IDF headers. Framing, checksums and crypto are
-the likeliest place for a porting bug, and keeping them host-compilable means those bugs get caught
-by `pio test -e native` instead of on the bench.
+`src/proto/` is deliberately free of Arduino and ESP-IDF headers. Framing and checksums are the
+likeliest place for a porting bug, and keeping them host-compilable means those bugs get caught by
+`pio test -e native` instead of on the bench.
+
+### How the ports are verified
+
+Every expected value in `test/` comes from the *reference* implementation — msmart for Midea,
+python-broadlink and `electrolux-ac-cli` for the Electrolux — not from this C++ code. A mistake in
+the port therefore fails a test rather than being baked into the fixture. `tools/gen_vectors.py`
+regenerates them all.
+
+Encryption can't be checked that way, because the native environment has no mbedtls. Instead the
+firmware runs a **boot self-test** over vectors generated the same way: the MD5-derived AES-ECB key,
+PKCS7, AES-CBC (including that mbedtls doesn't mutate the caller's IV), the V3 handshake key
+derivation with a tampered-digest negative case, and a full Midea V2 packet encode/decode compared
+byte-for-byte against one built by msmart. The result is logged at startup and reported by
+`GET /api/health`:
+
+```json
+{ "ok": true, "selftest": { "passed": true, "detail": "all checks passed" } }
+```
 
 ## First boot
 
@@ -117,7 +139,7 @@ serving its own private AP.
 ```
 GET   /api/health
 GET   /api/units                      -> [{id, vendor, name, online}]
-GET   /api/units/{id}                 -> unified state
+GET   /api/units/{id}                 -> normalised state
 GET   /api/units/{id}/raw             -> the last raw vendor payload, for schema debugging
 PATCH /api/units/{id}                 -> partial state; only the keys present are applied
 POST  /api/units/{id}/actions/{name}  -> led_toggle | self_clean | clear_timer
@@ -125,8 +147,13 @@ GET   /api/config                     -> current config, secrets redacted
 POST  /api/config                     -> provisioning; reboots on success
 ```
 
-State. Fields a unit doesn't report are `null` rather than omitted, and `features` only lists what
-the driver says it supports:
+The two ACs stay entirely separate — separate ids, separate driver tasks, separate state, and (from
+phase 4) separate accessories in Apple Home. "Normalised" refers only to the *shape* of this JSON:
+both vendors report through one shared vocabulary so the REST and HomeKit layers need no per-vendor
+code paths.
+
+Fields a unit doesn't report are `null` rather than omitted, and `features` only lists what the
+driver says it supports:
 
 ```json
 {

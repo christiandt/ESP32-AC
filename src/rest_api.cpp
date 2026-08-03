@@ -7,6 +7,7 @@
 
 #include "ac_registry.h"
 #include "config_store.h"
+#include "selftest.h"
 
 namespace acbridge {
 namespace {
@@ -281,6 +282,9 @@ esp_err_t handleHealth(httpd_req_t* req) {
   doc["uptime_ms"] = millis();
   doc["free_heap"] = ESP.getFreeHeap();
   doc["units"] = g_registry.count();
+  JsonObject st = doc["selftest"].to<JsonObject>();
+  st["passed"] = lastSelfTest().passed;
+  st["detail"] = lastSelfTest().detail;
   sendJson(req, "200 OK", doc);
   return ESP_OK;
 }
@@ -506,7 +510,7 @@ esp_err_t handleConfigPost(httpd_req_t* req) {
     if (midea["enabled"].is<bool>()) m.enabled = midea["enabled"];
     if (midea["name"].is<const char*>()) copyStr(m.name, sizeof(m.name), midea["name"]);
     if (midea["ip"].is<const char*>()) copyStr(m.ip, sizeof(m.ip), midea["ip"]);
-    if (midea["device_id"].is<uint32_t>()) m.device_id = midea["device_id"];
+    if (midea["device_id"].is<uint64_t>()) m.device_id = midea["device_id"].as<uint64_t>();
     if (midea["port"].is<uint16_t>()) m.port = midea["port"];
     if (midea["token"].is<const char*>()) copyStr(m.token, sizeof(m.token), midea["token"]);
     if (midea["key"].is<const char*>()) copyStr(m.key, sizeof(m.key), midea["key"]);

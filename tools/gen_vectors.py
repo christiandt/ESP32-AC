@@ -102,22 +102,100 @@ def discovery_packet(local_ip: str, src_port: int, datetime_block: bytes = bytes
 def midea_vectors() -> Dict[str, Any]:
     try:
         import msmart.crc8 as crc8
+        from msmart.device.AC.command import (Command, GetStateCommand, Response,
+                                              SetStateCommand, ToggleDisplayCommand)
+        from msmart.frame import Frame
+        from msmart.lan import Security, _Packet
     except ImportError:
         print("note: msmart-ng not installed; skipping Midea vectors "
               "(pip install msmart-ng)", file=sys.stderr)
         return {}
 
+    def build(cmd, message_id: int) -> bytes:
+        # Command.tobytes() pre-increments a class-level counter, so pin it to
+        # make the vectors reproducible.
+        Command._message_id = message_id - 1
+        return cmd.tobytes()
+
     query = bytes([0x41, 0x81, 0x00, 0xFF, 0x03, 0xFF, 0x00, 0x02] + [0x00] * 13)
     mutated = bytearray(query)
     mutated[2] = 0x01
-    return {
+
+    v: Dict[str, Any] = {
         "crc8_empty": crc8.calculate(b""),
         "crc8_00": crc8.calculate(b"\x00"),
         "crc8_01": crc8.calculate(b"\x01"),
         "crc8_ff": crc8.calculate(b"\xff"),
         "crc8_query": crc8.calculate(query),
         "crc8_query_mutated": crc8.calculate(bytes(mutated)),
+        "md5_sign_key": Security.ENC_KEY.hex(),
     }
+
+    # Command frames.
+    v["get_state_frame"] = build(GetStateCommand(), 1).hex()
+
+    toggle = ToggleDisplayCommand()
+    toggle.beep_on = True
+    v["toggle_display_frame"] = build(toggle, 1).hex()
+
+    cool = SetStateCommand()
+    cool.beep_on, cool.power_on = True, True
+    cool.target_temperature, cool.operational_mode = 22.0, 2   # COOL
+    cool.fan_speed, cool.swing_mode = 102, 0xC                 # auto, vertical
+    cool.eco = cool.turbo = cool.fahrenheit = cool.sleep = False
+    cool.freeze_protection = cool.follow_me = cool.purifier = False
+    cool.target_humidity = 40
+    v["set_state_cool_22"] = build(cool, 1).hex()
+
+    heat = SetStateCommand()
+    heat.beep_on, heat.power_on = False, False
+    heat.target_temperature, heat.operational_mode = 25.5, 4   # HEAT, half degree
+    heat.fan_speed, heat.swing_mode = 60, 0xF
+    heat.eco = heat.turbo = heat.sleep = True
+    heat.fahrenheit = False
+    heat.freeze_protection = heat.follow_me = heat.purifier = True
+    heat.target_humidity = 55
+    v["set_state_heat_25_5_all_flags"] = build(heat, 0x42).hex()
+
+    # 16 degrees falls outside the primary 17-30 range and uses the alternate
+    # temperature byte.
+    alt = SetStateCommand()
+    alt.beep_on, alt.power_on = True, True
+    alt.target_temperature, alt.operational_mode = 16.0, 2
+    alt.fan_speed, alt.swing_mode = 40, 0
+    alt.eco = alt.turbo = alt.fahrenheit = alt.sleep = False
+    alt.freeze_protection = alt.follow_me = alt.purifier = False
+    alt.target_humidity = 40
+    v["set_state_alternate_temp"] = build(alt, 1).hex()
+
+    # A state response, wrapped exactly as a device would.
+    p = bytearray(22)
+    p[0], p[1], p[2], p[3] = 0xC0, 0x01, 0x46, 0x66   # STATE, on, 22.0/COOL, fan auto
+    p[7] = 0x0C                                        # swing vertical
+    p[11], p[12] = 0x63, 0x6E                          # indoor 24.5, outdoor 30.0
+    p[19] = 40                                         # target humidity
+    payload = bytes(p) + bytes([crc8.calculate(bytes(p))])
+    header = bytearray(10)
+    header[0], header[1], header[2], header[9] = 0xAA, len(payload) + 10, 0xAC, 0x04
+    frame = bytearray(header + payload)
+    frame.append(Frame.checksum(frame[1:]))
+    v["state_frame"] = bytes(frame).hex()
+
+    # The V2 packet, using the same fixed timestamp the firmware sends so the
+    # on-device self-test can compare byte for byte.
+    ts = bytes([0x00, 0x00, 0x00, 0x0C, 0x01, 0x01, 0x19, 0x14])
+    device_id = 0x0123456789
+    inner = build(GetStateCommand(), 1)
+    enc = Security.encrypt_aes(inner)
+    length = 40 + len(enc) + 16
+    h = b"\x5A\x5A\x01\x11" + length.to_bytes(2, "little") + b"\x20\x00"
+    h += bytes(4) + ts + device_id.to_bytes(8, "little") + bytes(12)
+    packet = h + enc
+    packet += Security.sign(packet)
+    assert _Packet.decode(packet) == inner, "V2 packet failed msmart's own decoder"
+    v["v2_packet"] = packet.hex()
+
+    return v
 
 
 def build() -> Dict[str, Any]:

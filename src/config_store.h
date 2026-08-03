@@ -12,7 +12,7 @@
 
 namespace acbridge {
 
-constexpr uint16_t kConfigVersion = 1;
+constexpr uint16_t kConfigVersion = 2;
 
 struct WifiConfig {
   char ssid[33] = {0};
@@ -31,7 +31,9 @@ struct MideaConfig {
   bool enabled = false;
   char name[33] = {0};
   char ip[16] = {0};
-  uint32_t device_id = 0;
+  // Midea device ids are ~15 digits, well beyond 32 bits, and the protocol
+  // packs the id as 8 bytes.
+  uint64_t device_id = 0;
   uint16_t port = 6444;
   char token[161] = {0};  // 64 bytes, hex encoded
   char key[97] = {0};     // 32 bytes, hex encoded
