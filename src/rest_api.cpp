@@ -235,6 +235,10 @@ bool parseCommand(JsonObjectConst body, const AcDriver& drv, const AcState& st, 
       snprintf(err, err_len, "swing must be one of off|vertical|horizontal|both");
       return false;
     }
+    if (!drv.supportsSwing(s)) {
+      snprintf(err, err_len, "this unit has no '%s' swing axis", v.as<const char*>());
+      return false;
+    }
     cmd.swing.set(s);
   }
 
@@ -303,8 +307,29 @@ esp_err_t handleUnitGet(httpd_req_t* req) {
   if (!guard(req)) return ESP_OK;
   char path[64];
   if (!unitPath(req, path, sizeof(path))) return sendError(req, "404 Not Found", "unknown unit");
-  // GET only serves the unit itself, never a sub-resource.
-  if (strchr(path, '/') != nullptr) return sendError(req, "404 Not Found", "unknown resource");
+
+  // The one sub-resource: the last raw vendor payload. The Electrolux status
+  // schema isn't documented anywhere, so this makes confirming the real field
+  // names a single request rather than a wire capture.
+  char* slash = strchr(path, '/');
+  if (slash != nullptr) {
+    if (strcmp(slash + 1, "raw") != 0) {
+      return sendError(req, "404 Not Found", "unknown resource");
+    }
+    *slash = '\0';
+    const int raw_idx = g_registry.indexOf(path);
+    if (raw_idx < 0) return sendError(req, "404 Not Found", "unknown unit");
+    const char* raw = g_registry.driverAt(static_cast<size_t>(raw_idx))->rawStatus();
+    JsonDocument out;
+    out["id"] = path;
+    if (raw != nullptr) {
+      out["raw"] = raw;
+    } else {
+      out["raw"] = nullptr;
+    }
+    sendJson(req, "200 OK", out);
+    return ESP_OK;
+  }
 
   const int idx = g_registry.indexOf(path);
   if (idx < 0) return sendError(req, "404 Not Found", "unknown unit");

@@ -21,13 +21,29 @@ This firmware is a port of their wire protocols to C++; neither repo is modified
 
 | Phase | What | State |
 |---|---|---|
-| 1 | Skeleton, task model, REST API, provisioning, native test harness | **done** (units are mocks) |
-| 2 | Electrolux / Broadlink driver | not started |
+| 1 | Skeleton, task model, REST API, provisioning, native test harness | **done** |
+| 2 | Electrolux / Broadlink driver | **done** (status schema needs confirming — see below) |
 | 3 | Midea LAN V3 driver | not started |
 | 4 | HomeKit via HomeSpan | not started |
 
-Phase 1 registers two `MockDriver` units under the final ids (`midea`, `electrolux`), so the REST
-shape and the concurrency model can be exercised before either protocol exists.
+The Midea unit is still a `MockDriver` under its final id, so the REST shape won't change when the
+real driver lands. The Electrolux falls back to a mock too if it isn't configured.
+
+### Confirming the Electrolux status schema
+
+`electrolux-ac-cli` never parses the status response — `status()` returns the raw blob and only
+`envtemp` is named anywhere (in its README). The driver reads the field names that mirror the
+setters (`temp`, `ac_pwr`, `ac_mode`, `ac_mark`, `ac_vdir`, `scrdisp`, `ac_slp`, `mldprf`), which is
+the obvious reading but is inference until a real reply is seen. Any field that isn't there simply
+stays `null`.
+
+To check, ask the device what it actually said:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://esp32-ac.local/api/units/electrolux/raw
+```
+
+If a name differs, it's a one-line fix in `ElectroluxDriver::parseStatus`.
 
 ## Toolchain
 
@@ -102,6 +118,7 @@ serving its own private AP.
 GET   /api/health
 GET   /api/units                      -> [{id, vendor, name, online}]
 GET   /api/units/{id}                 -> unified state
+GET   /api/units/{id}/raw             -> the last raw vendor payload, for schema debugging
 PATCH /api/units/{id}                 -> partial state; only the keys present are applied
 POST  /api/units/{id}/actions/{name}  -> led_toggle | self_clean | clear_timer
 GET   /api/config                     -> current config, secrets redacted

@@ -7,6 +7,7 @@
 
 #include "ac_registry.h"
 #include "config_store.h"
+#include "drivers/electrolux.h"
 #include "drivers/mock.h"
 #include "rest_api.h"
 
@@ -14,12 +15,9 @@ using namespace acbridge;
 
 namespace {
 
-// Phase 1 stands both units up as mocks so the REST shape, the task model and
-// the HomeKit mapping can be exercised before either protocol exists. Phases 2
-// and 3 swap these for MideaDriver and ElectroluxDriver; the ids and names are
-// already the final ones.
-MockDriver g_midea("midea", "Midea Porta Split");
-MockDriver g_electrolux("electrolux", "Electrolux");
+// The Midea unit is still a mock until phase 3; its id and name are already the
+// final ones so the REST shape doesn't change when the real driver lands.
+MockDriver g_midea_mock("midea", "Midea Porta Split");
 
 constexpr uint32_t kWifiTimeoutMs = 20000;
 constexpr const char* kApSsid = "esp32-ac-setup";
@@ -41,6 +39,21 @@ bool connectWifi(const WifiConfig& wifi) {
   }
   Serial.printf("Connected. IP: %s\n", WiFi.localIP().toString().c_str());
   return true;
+}
+
+// Drivers are built from stored config, so they outlive setup() and are
+// allocated once here rather than being globals that can't see the config.
+void registerDrivers(const Config& cfg) {
+  g_registry.add(&g_midea_mock);
+
+  if (cfg.electrolux.enabled && cfg.electrolux.ip[0] != '\0') {
+    g_registry.add(new ElectroluxDriver(cfg.electrolux));
+    Serial.printf("Electrolux at %s\n", cfg.electrolux.ip);
+  } else {
+    // Keep the unit present so the REST surface is stable, just obviously fake.
+    g_registry.add(new MockDriver("electrolux", "Electrolux (unconfigured)"));
+    Serial.println("Electrolux not configured — using a mock");
+  }
 }
 
 void startProvisioningAp() {
@@ -71,8 +84,7 @@ void setup() {
   }
   Serial.printf("REST bearer token: %s\n", cfg.api.bearer);
 
-  g_registry.add(&g_midea);
-  g_registry.add(&g_electrolux);
+  registerDrivers(cfg);
 
   if (cfg.wifi.valid() && connectWifi(cfg.wifi)) {
     restApiSetProvisioning(false);

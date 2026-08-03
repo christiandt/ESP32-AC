@@ -21,6 +21,14 @@ class AcDriver {
   virtual bool supportsFeature(Feature) const { return false; }
   virtual bool supportsAction(Action) const { return false; }
 
+  // Not every unit has every axis — the Electrolux module exposes only the
+  // vertical vane, so asking it for Horizontal is a 400, not a silent no-op.
+  virtual bool supportsSwing(Swing s) const { return s == Swing::Off; }
+
+  // Last raw vendor payload, for debugging a schema we don't fully know.
+  // nullptr when the driver has nothing to show.
+  virtual const char* rawStatus() const { return nullptr; }
+
   // Read the unit. On failure return false with state.error set; the registry
   // marks the unit offline and keeps the previous readings visible.
   virtual bool poll(AcState& state) = 0;

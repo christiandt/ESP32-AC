@@ -17,6 +17,7 @@ class MockDriver : public AcDriver {
 
   bool supportsFeature(Feature f) const override;
   bool supportsAction(Action a) const override;
+  bool supportsSwing(Swing) const override { return true; }
 
   bool poll(AcState& state) override;
   bool apply(const AcCommand& cmd, AcState& state) override;
