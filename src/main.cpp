@@ -10,6 +10,7 @@
 #include "drivers/electrolux.h"
 #include "drivers/midea.h"
 #include "drivers/mock.h"
+#include "homekit.h"
 #include "rest_api.h"
 #include "selftest.h"
 
@@ -96,6 +97,7 @@ void setup() {
   if (cfg.wifi.valid() && connectWifi(cfg.wifi)) {
     restApiSetProvisioning(false);
     g_registry.start();
+    homekitBegin(cfg);
   } else {
     startProvisioningAp();
     // Deliberately no driver tasks in provisioning mode: there is no route to
@@ -110,6 +112,11 @@ void setup() {
 }
 
 void loop() {
-  // Everything lives on its own task. Phase 4 puts homeSpan.poll() here.
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  // The AC drivers each have their own task; this one belongs to HomeSpan,
+  // which is not thread-safe and owns every characteristic read and write.
+  if (homekitStarted()) {
+    homekitLoop();
+  } else {
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
 }

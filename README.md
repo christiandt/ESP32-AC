@@ -28,7 +28,7 @@ This firmware is a port of their wire protocols to C++; neither repo is modified
 | 1 | Skeleton, task model, REST API, provisioning, native test harness | **done** |
 | 2 | Electrolux / Broadlink driver | **done** (status schema needs confirming — see below) |
 | 3 | Midea LAN V3 driver | **done** |
-| 4 | HomeKit via HomeSpan | not started |
+| 4 | HomeKit via HomeSpan | **done** |
 
 Either unit falls back to a `MockDriver` under its final id if it isn't configured, so the REST shape
 is the same whether or not hardware is attached.
@@ -204,6 +204,44 @@ rather than hammering a device whose session is held elsewhere.
 **Capabilities are baked in, not probed.** `tools/export_config.py --probe` reads them once from the
 Midea unit and stores them in NVS, so the firmware never needs an on-device capabilities parser.
 `mpsac` already treats capabilities as best-effort (`mpsac/device.py:69`).
+
+## Apple Home
+
+The device pairs as a **bridge** carrying one accessory per AC, so the two units appear in the Home
+app as two independent air conditioners with their own rooms and automations. Pair with HomeSpan's
+default code `466-37-726` unless you change it.
+
+The HAP category is `Bridges`, not `AirConditioners`. The category is device-wide and only sets the
+icon shown *while pairing* — as HomeSpan's own bridge example puts it, it "does NOT change the icons
+of the Accessory Tiles". The air-conditioner look and controls come from each accessory's
+`HeaterCooler` service, which is marked as the primary service. Choosing `Bridges` additionally lets
+each accessory be renamed independently and lists the device on the Home app's Hubs & Bridges page.
+`AirConditioners` would be the right pick only for one ESP32 per unit.
+
+| HomeKit | Midea | Electrolux |
+|---|---|---|
+| `Active` | `power_state` | `ac_pwr` |
+| `CurrentTemperature` | `indoor_temperature` | `envtemp` |
+| `TargetHeaterCoolerState` | `operational_mode` | `ac_mode` |
+| `CurrentHeaterCoolerState` | derived from setpoint vs. room | derived |
+| `Cooling`/`HeatingThresholdTemperature` | `target_temperature` | `temp` |
+| `RotationSpeed` | `fan_speed` | `ac_mark` |
+| `SwingMode` | `swing_mode` | `ac_vdir` |
+
+Two places where HomeKit's model and the hardware's don't line up, and what this does about it:
+
+- **One setpoint, two thresholds.** HomeKit's AUTO mode shows separate heating and cooling
+  thresholds; these units have a single target. Writing either threshold sets the target, and both
+  are kept equal on read. Their ranges are widened from HomeKit's defaults (cooling 10–35, heating
+  0–25) to whatever the unit reported to `mpsac` — which is why `export_config.py` stores them.
+- **No dry or fan-only mode, and no automatic fan.** HomeKit has no vocabulary for these, so each
+  unit also gets plain switches: **Dry**, **Fan Only**, **Fan Auto**, plus one per supported feature
+  (ECO, Boost, Sleep, Ion, Freeze Protection, Follow Me, Self Clean) and **Display**. The Midea's
+  display is a flip rather than a settable flag, so its switch sends the toggle action and only when
+  the state would actually change.
+
+`CurrentHeaterCoolerState` is derived rather than reported: neither protocol says whether the
+compressor is running, so it is inferred from the setpoint against the room temperature.
 
 ## Licence
 
