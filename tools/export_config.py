@@ -138,7 +138,10 @@ def build(args: argparse.Namespace) -> Dict[str, Any]:
     if midea:
         entry: Dict[str, Any] = {
             "enabled": True,
-            "name": midea.get("name") or "Midea Porta Split",
+            # Not midea["name"]: that is the module's own network name
+            # ("net_ac_0150"), which is no use as a display name and would
+            # come back every time the blob is regenerated.
+            "name": args.midea_name,
             "ip": midea["ip"],
             "device_id": int(midea["device_id"]),
             "port": int(midea.get("port", 6444)),
@@ -196,6 +199,8 @@ def main() -> int:
     p.add_argument("--psk", help="WiFi password")
     p.add_argument("--bearer", help="Set an explicit REST bearer token (default: keep the "
                                     "device's generated one)")
+    p.add_argument("--midea-name", default="Midea Porta Split",
+                   help="Display name for the Midea unit")
     p.add_argument("--electrolux-name", default="Electrolux", help="Display name for the unit")
     p.add_argument("--probe", action="store_true",
                    help="Connect to the Midea unit to read real capabilities and temp limits")
