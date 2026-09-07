@@ -15,6 +15,22 @@ namespace {
 // The V3 session uses a zero IV throughout (msmart's Security.decrypt_aes_cbc).
 const uint8_t kZeroIv[16] = {0};
 
+// command.py ResponseId.CAPABILITIES. Capabilities are baked into NVS at
+// provisioning time (see tools/export_config.py --probe), so this firmware
+// never asks for them — which makes any 0xB5 reply one the unit volunteered.
+constexpr uint8_t kResponseCapabilities = 0xB5;
+
+// How many volunteered frames to step over before treating the exchange as
+// lost. In practice the unit sends at most one.
+constexpr int kMaxUnsolicitedFrames = 3;
+
+// Some units interleave unsolicited CAPABILITIES frames (frame type 0x05) with
+// the reply to whatever was actually asked. msmart carries the same allowance
+// in Response.construct.
+bool isUnsolicited(const uint8_t* frame, size_t len) {
+  return len > kFrameHeaderLen && frame[kFrameHeaderLen] == kResponseCapabilities;
+}
+
 // _Packet._timestamp packs the current time as BCD-ish bytes. The device does
 // not appear to validate it and the ESP32 has no clock, so send something
 // well-formed and fixed rather than zeros (which would encode month 0, day 0).
@@ -432,17 +448,29 @@ bool MideaDriver::transact(const uint8_t* frame, size_t frame_len, uint8_t* out,
       return false;
     }
 
-    bool ok;
-    size_t reply_len = 0;
-    if (v3) {
-      uint8_t type = 0;
-      ok = sendV3(packet, packet_len, kV3EncryptedRequest) &&
-           recvV3(scratch_, sizeof(scratch_), &reply_len, &type) && type == kV3EncryptedResponse;
-    } else {
-      ok = writeAll(packet, packet_len) && recvV2Raw(scratch_, sizeof(scratch_), &reply_len);
+    bool ok = false;
+    if (v3 ? sendV3(packet, packet_len, kV3EncryptedRequest) : writeAll(packet, packet_len)) {
+      // Step over anything the unit volunteered. Those frames arrive where our
+      // reply should be, but the reply is still queued behind them, so read on
+      // rather than re-sending the query.
+      for (int i = 0; i <= kMaxUnsolicitedFrames; i++) {
+        size_t reply_len = 0;
+        bool got;
+        if (v3) {
+          uint8_t type = 0;
+          got = recvV3(scratch_, sizeof(scratch_), &reply_len, &type) &&
+                type == kV3EncryptedResponse;
+        } else {
+          got = recvV2Raw(scratch_, sizeof(scratch_), &reply_len);
+        }
+        if (!got || !decodeV2(scratch_, reply_len, out, cap, out_len)) break;
+        if (!isUnsolicited(out, *out_len)) {
+          ok = true;
+          break;
+        }
+      }
     }
-
-    if (ok && decodeV2(scratch_, reply_len, out, cap, out_len)) return true;
+    if (ok) return true;
 
     // A stale session is the common cause here: the vendor app took the
     // device, or the unit dropped the connection. Reconnect once and retry.
