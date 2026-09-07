@@ -178,6 +178,21 @@ def midea_vectors() -> Dict[str, Any]:
     v["set_out_silent_on"] = build(SetPropertiesCommand({PropertyId.OUT_SILENT: True}), 1).hex()
     v["set_out_silent_off"] = build(SetPropertiesCommand({PropertyId.OUT_SILENT: False}), 1).hex()
 
+    # SELF_CLEAN takes command.py's default encoding — a plain 0/1.
+    v["set_self_clean_on"] = build(SetPropertiesCommand({PropertyId.SELF_CLEAN: True}), 1).hex()
+    v["set_self_clean_off"] = build(SetPropertiesCommand({PropertyId.SELF_CLEAN: False}), 1).hex()
+
+    # IECO's value is compound: encode writes [frame, ieco_number, switch] plus
+    # ten trailing zero bytes, and decode reads the switch back at data[1].
+    # device.py passes (ieco_number, ieco_switch); ieco_number defaults to 1.
+    v["set_ieco_on"] = build(SetPropertiesCommand({PropertyId.IECO: (1, True)}), 1).hex()
+    v["set_ieco_off"] = build(SetPropertiesCommand({PropertyId.IECO: (1, False)}), 1).hex()
+
+    # All three in one query, which is how the firmware reads them.
+    v["get_all_properties_frame"] = build(
+        GetPropertiesCommand([PropertyId.OUT_SILENT, PropertyId.IECO, PropertyId.SELF_CLEAN]),
+        1).hex()
+
     # A properties response, wrapped as a device would send it. Decoded with
     # msmart's own parser before it is allowed to become a fixture.
     def properties_frame(value: int) -> bytes:
@@ -197,6 +212,32 @@ def midea_vectors() -> Dict[str, Any]:
     assert Response.construct(off_frame).get_property(PropertyId.OUT_SILENT) is False
     v["properties_out_silent_on"] = on_frame.hex()
     v["properties_out_silent_off"] = off_frame.hex()
+
+    # A reply carrying all three properties at once, with different value
+    # lengths, which is what the firmware's single query gets back.
+    def multi_frame() -> bytes:
+        entries = [
+            (PropertyId.OUT_SILENT, bytes([0x03])),
+            (PropertyId.IECO, bytes([0x01, 0x01])),  # ieco_number, switch on
+            (PropertyId.SELF_CLEAN, bytes([0x01])),
+        ]
+        body = bytearray([0xB1, len(entries)])
+        for prop, value in entries:
+            body += struct.pack("<H", prop)
+            body += bytes([0x00, len(value)]) + value
+        payload = bytes(body) + bytes([crc8.calculate(bytes(body))])
+        header = bytearray(10)
+        header[0], header[1], header[2], header[9] = 0xAA, len(payload) + 10, 0xAC, 0x03
+        frame = bytearray(header + payload)
+        frame.append(Frame.checksum(frame[1:]))
+        return bytes(frame)
+
+    multi = multi_frame()
+    parsed = Response.construct(multi)
+    assert parsed.get_property(PropertyId.OUT_SILENT) is True
+    assert parsed.get_property(PropertyId.IECO) is True
+    assert parsed.get_property(PropertyId.SELF_CLEAN) is True
+    v["properties_all_three"] = multi.hex()
 
     # A state response, wrapped exactly as a device would.
     p = bytearray(22)

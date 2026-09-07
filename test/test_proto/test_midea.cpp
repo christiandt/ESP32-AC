@@ -421,3 +421,74 @@ void test_find_property_accepts_real_device_reply(void) {
   bad[len - 1] ^= 0xFF;
   TEST_ASSERT_FALSE(findProperty(bad, len, kPropOutSilent, &value, &value_len));
 }
+
+// SELF_CLEAN uses command.py's default encoding — a plain 0/1.
+void test_set_self_clean_frames(void) {
+  uint8_t frame[64];
+  const uint8_t on[] = {kSelfCleanOn};
+  const uint8_t off[] = {kSelfCleanOff};
+
+  size_t len = buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropSelfClean, on, sizeof(on));
+  assertHex("aa12ac00000000000002b0013900010101f261", frame, len);
+
+  len = buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropSelfClean, off, sizeof(off));
+  assertHex("aa12ac00000000000002b0013900010001361e", frame, len);
+}
+
+// IECO carries 13 bytes: [frame, ieco_number, switch] then ten zeros.
+void test_set_ieco_frames(void) {
+  uint8_t value[kIEcoValueLen];
+  uint8_t frame[64];
+
+  TEST_ASSERT_EQUAL_size_t(kIEcoValueLen,
+                           encodeIEcoValue(value, sizeof(value), kIEcoNumberDefault, true));
+  TEST_ASSERT_EQUAL_UINT8(0x00, value[0]);
+  TEST_ASSERT_EQUAL_UINT8(0x01, value[1]);
+  TEST_ASSERT_EQUAL_UINT8(0x01, value[2]);
+  for (size_t i = 3; i < kIEcoValueLen; i++) TEST_ASSERT_EQUAL_UINT8(0x00, value[i]);
+
+  size_t len =
+      buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropIEco, value, sizeof(value));
+  assertHex("aa1eac00000000000002b001e3000d0001010000000000000000000001f29e", frame, len);
+
+  encodeIEcoValue(value, sizeof(value), kIEcoNumberDefault, false);
+  len = buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropIEco, value, sizeof(value));
+  assertHex("aa1eac00000000000002b001e3000d00010000000000000000000000019af7", frame, len);
+
+  uint8_t small[4];
+  TEST_ASSERT_EQUAL_size_t(0, encodeIEcoValue(small, sizeof(small), 1, true));
+}
+
+void test_get_all_properties_frame(void) {
+  const uint16_t props[] = {kPropOutSilent, kPropIEco, kPropSelfClean};
+  uint8_t frame[64];
+  const size_t len = buildGetPropertiesFrame(frame, sizeof(frame), 0x01, props, 3);
+  assertHex("aa14ac00000000000003b103cd00e300390001e9b6", frame, len);
+}
+
+// One reply carrying all three, with different value lengths, so the walk over
+// variable-length entries has to be right to reach the last one.
+void test_find_property_walks_multiple_entries(void) {
+  uint8_t frame[64];
+  const size_t len =
+      unhexM("aa1dac00000000000003b103cd00000103e300000201013900000101eba2", frame, sizeof(frame));
+
+  const uint8_t* value = nullptr;
+  size_t value_len = 0;
+
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropOutSilent, &value, &value_len));
+  TEST_ASSERT_EQUAL_size_t(1, value_len);
+  TEST_ASSERT_EQUAL_UINT8(kOutSilentOn, value[0]);
+
+  // IECO's switch is the second byte, not the first.
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropIEco, &value, &value_len));
+  TEST_ASSERT_EQUAL_size_t(2, value_len);
+  TEST_ASSERT_EQUAL_UINT8(0x01, value[kIEcoSwitchOffset]);
+
+  // Last entry, only reachable if the two before it were sized correctly.
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropSelfClean, &value, &value_len));
+  TEST_ASSERT_EQUAL_size_t(1, value_len);
+  TEST_ASSERT_EQUAL_UINT8(kSelfCleanOn, value[0]);
+
+  TEST_ASSERT_FALSE(findProperty(frame, len, 0x1234, &value, &value_len));
+}

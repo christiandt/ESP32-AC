@@ -105,18 +105,30 @@ class MideaDriver : public AcDriver {
   bool has_cached_ = false;
   bool beep_ = true;
 
-  // Outdoor silent is a *property*, not a bit in the state frame, so it is read
-  // and written with its own command and cached separately.
-  bool out_silent_ = false;
-  bool has_out_silent_ = false;
+  // Outdoor silent, iECO and self clean are *properties* rather than bits in
+  // the state frame, so they need their own command family and are cached
+  // separately. All three are read in a single query.
+  struct PropCache {
+    bool value = false;
+    bool present = false;
+    void set(bool v) {
+      value = v;
+      present = true;
+    }
+  };
+  PropCache out_silent_;
+  PropCache ieco_;
+  PropCache self_clean_;
+
   // A failed property read costs a session drop inside transact(), so stop
   // asking after a few consecutive failures rather than reconnecting on every
-  // poll for a feature the unit evidently won't discuss.
-  uint8_t out_silent_failures_ = 0;
-  static constexpr uint8_t kOutSilentGiveUp = 3;
+  // poll for features the unit evidently won't discuss.
+  uint8_t property_failures_ = 0;
+  static constexpr uint8_t kPropertyGiveUp = 3;
 
-  bool readOutSilent(AcState& state);
-  bool writeOutSilent(bool on, AcState& state);
+  bool readProperties(AcState& state);
+  bool writeProperty(uint16_t prop, const uint8_t* value, size_t value_len, AcState& state);
+  bool applyPropertyCommands(const AcCommand& cmd, AcState& state, bool& any);
 
   uint8_t tx_[kBuf];
   uint8_t rx_[kBuf];

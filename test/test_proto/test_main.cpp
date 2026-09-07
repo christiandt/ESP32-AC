@@ -90,6 +90,10 @@ void test_find_property_reads_out_silent(void);
 void test_find_property_rejects_absent_and_failed(void);
 void test_property_frames_reject_small_buffer(void);
 void test_find_property_accepts_real_device_reply(void);
+void test_set_self_clean_frames(void);
+void test_set_ieco_frames(void);
+void test_get_all_properties_frame(void);
+void test_find_property_walks_multiple_entries(void);
 void test_v2_header(void);
 void test_v2_parse(void);
 void test_v2_parse_rejects_truncated_and_bad_start(void);
@@ -153,6 +157,10 @@ int main(int, char**) {
   RUN_TEST(test_find_property_rejects_absent_and_failed);
   RUN_TEST(test_property_frames_reject_small_buffer);
   RUN_TEST(test_find_property_accepts_real_device_reply);
+  RUN_TEST(test_set_self_clean_frames);
+  RUN_TEST(test_set_ieco_frames);
+  RUN_TEST(test_get_all_properties_frame);
+  RUN_TEST(test_find_property_walks_multiple_entries);
 
   RUN_TEST(test_v2_header);
   RUN_TEST(test_v2_parse);

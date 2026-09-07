@@ -120,7 +120,10 @@ bool featureImplemented(Feature f) {
     case Feature::Freeze:
     case Feature::FollowMe:
     case Feature::Led:
+    // Properties rather than state-frame bits, but supported all the same.
     case Feature::OutSilent:
+    case Feature::IEco:
+    case Feature::SelfClean:
       return true;
     default:
       return false;
@@ -503,8 +506,14 @@ void MideaDriver::publish(const MideaState& st, AcState& out) const {
   if (supportsFeature(Feature::FollowMe)) out.feature(Feature::FollowMe).set(st.follow_me);
   if (supportsFeature(Feature::Led)) out.feature(Feature::Led).set(st.display_on);
   if (supportsFeature(Feature::Beep)) out.feature(Feature::Beep).set(beep_);
-  if (supportsFeature(Feature::OutSilent) && has_out_silent_) {
-    out.feature(Feature::OutSilent).set(out_silent_);
+  if (supportsFeature(Feature::OutSilent) && out_silent_.present) {
+    out.feature(Feature::OutSilent).set(out_silent_.value);
+  }
+  if (supportsFeature(Feature::IEco) && ieco_.present) {
+    out.feature(Feature::IEco).set(ieco_.value);
+  }
+  if (supportsFeature(Feature::SelfClean) && self_clean_.present) {
+    out.feature(Feature::SelfClean).set(self_clean_.value);
   }
   if (supportsFeature(Feature::Freeze) && st.has_freeze) {
     out.feature(Feature::Freeze).set(st.freeze_protection);
@@ -520,49 +529,98 @@ void MideaDriver::publish(const MideaState& st, AcState& out) const {
   }
 }
 
-// Outdoor silent lives in the properties family rather than the state frame, so
-// it costs one extra exchange per poll. Only asked for when the unit's stored
-// capabilities say it has it.
-bool MideaDriver::readOutSilent(AcState& state) {
-  const uint16_t props[] = {kPropOutSilent};
+// Outdoor silent, iECO and self clean live in the properties family rather than
+// the state frame, so they cost one extra exchange per poll. Read together in a
+// single query, and only for what the stored capabilities claim.
+bool MideaDriver::readProperties(AcState& state) {
+  uint16_t props[3];
+  size_t n = 0;
+  if (supportsFeature(Feature::OutSilent)) props[n++] = kPropOutSilent;
+  if (supportsFeature(Feature::IEco)) props[n++] = kPropIEco;
+  if (supportsFeature(Feature::SelfClean)) props[n++] = kPropSelfClean;
+  if (n == 0) return true;
+
   uint8_t frame[64];
-  const size_t len = buildGetPropertiesFrame(frame, sizeof(frame), ++message_id_, props, 1);
+  const size_t len = buildGetPropertiesFrame(frame, sizeof(frame), ++message_id_, props, n);
   if (len == 0) return false;
 
-  uint8_t reply[128];
+  uint8_t reply[192];
   size_t reply_len = 0;
   if (!transact(frame, len, reply, sizeof(reply), &reply_len, state)) return false;
 
   const uint8_t* value = nullptr;
   size_t value_len = 0;
-  if (!findProperty(reply, reply_len, kPropOutSilent, &value, &value_len)) return false;
+  bool any = false;
 
-  // command.py decodes this as `data[0] == 3`, not as a plain boolean.
-  out_silent_ = value[0] == kOutSilentOn;
-  has_out_silent_ = true;
-  return true;
+  if (findProperty(reply, reply_len, kPropOutSilent, &value, &value_len)) {
+    // command.py decodes this as `data[0] == 3`, not as a plain boolean.
+    out_silent_.set(value[0] == kOutSilentOn);
+    any = true;
+  }
+  if (findProperty(reply, reply_len, kPropIEco, &value, &value_len) &&
+      value_len > kIEcoSwitchOffset) {
+    // The switch is the second byte; the first is the ieco number.
+    ieco_.set(value[kIEcoSwitchOffset] != 0);
+    any = true;
+  }
+  if (findProperty(reply, reply_len, kPropSelfClean, &value, &value_len)) {
+    self_clean_.set(value[0] != 0);
+    any = true;
+  }
+
+  // A reply that carried none of what we asked for is not a working read.
+  return any;
 }
 
-bool MideaDriver::writeOutSilent(bool on, AcState& state) {
-  const uint8_t value[] = {on ? kOutSilentOn : kOutSilentOff};
+bool MideaDriver::writeProperty(uint16_t prop, const uint8_t* value, size_t value_len,
+                                AcState& state) {
   uint8_t frame[64];
-  const size_t len = buildSetPropertyFrame(frame, sizeof(frame), ++message_id_, kPropOutSilent,
-                                           value, sizeof(value));
+  const size_t len =
+      buildSetPropertyFrame(frame, sizeof(frame), ++message_id_, prop, value, value_len);
   if (len == 0) {
-    state.setError("could not build out_silent frame");
+    state.setError("could not build property frame");
     return false;
   }
 
-  uint8_t reply[128];
+  uint8_t reply[192];
   size_t reply_len = 0;
   if (!transact(frame, len, reply, sizeof(reply), &reply_len, state)) return false;
 
   // The unit acks with the value it accepted, so trust that over what we sent.
   const uint8_t* echoed = nullptr;
   size_t echoed_len = 0;
-  if (findProperty(reply, reply_len, kPropOutSilent, &echoed, &echoed_len)) {
-    out_silent_ = echoed[0] == kOutSilentOn;
-    has_out_silent_ = true;
+  if (findProperty(reply, reply_len, prop, &echoed, &echoed_len)) {
+    if (prop == kPropOutSilent) {
+      out_silent_.set(echoed[0] == kOutSilentOn);
+    } else if (prop == kPropSelfClean) {
+      self_clean_.set(echoed[0] != 0);
+    } else if (prop == kPropIEco && echoed_len > kIEcoSwitchOffset) {
+      ieco_.set(echoed[kIEcoSwitchOffset] != 0);
+    }
+  }
+  return true;
+}
+
+// Applies whichever of the property-backed features the command mentions.
+// `any` reports whether at least one was written.
+bool MideaDriver::applyPropertyCommands(const AcCommand& cmd, AcState& state, bool& any) {
+  any = false;
+
+  if (cmd.feature(Feature::OutSilent).has()) {
+    const uint8_t v[] = {cmd.feature(Feature::OutSilent).value ? kOutSilentOn : kOutSilentOff};
+    if (!writeProperty(kPropOutSilent, v, sizeof(v), state)) return false;
+    any = true;
+  }
+  if (cmd.feature(Feature::SelfClean).has()) {
+    const uint8_t v[] = {cmd.feature(Feature::SelfClean).value ? kSelfCleanOn : kSelfCleanOff};
+    if (!writeProperty(kPropSelfClean, v, sizeof(v), state)) return false;
+    any = true;
+  }
+  if (cmd.feature(Feature::IEco).has()) {
+    uint8_t v[kIEcoValueLen];
+    encodeIEcoValue(v, sizeof(v), kIEcoNumberDefault, cmd.feature(Feature::IEco).value);
+    if (!writeProperty(kPropIEco, v, sizeof(v), state)) return false;
+    any = true;
   }
   return true;
 }
@@ -590,12 +648,12 @@ bool MideaDriver::poll(AcState& state) {
 
   // Best-effort: the state read already succeeded, so a unit that declines the
   // property query stays online with out_silent simply absent.
-  if (supportsFeature(Feature::OutSilent) && out_silent_failures_ < kOutSilentGiveUp) {
-    if (readOutSilent(state)) {
-      out_silent_failures_ = 0;
-    } else if (++out_silent_failures_ >= kOutSilentGiveUp) {
-      log_w("[%s] out_silent property unanswered %u times; not asking again", id(),
-            static_cast<unsigned>(out_silent_failures_));
+  if (property_failures_ < kPropertyGiveUp) {
+    if (readProperties(state)) {
+      property_failures_ = 0;
+    } else if (++property_failures_ >= kPropertyGiveUp) {
+      log_w("[%s] properties unanswered %u times; not asking again", id(),
+            static_cast<unsigned>(property_failures_));
     }
     // The state read is what decides the poll's outcome, so clear anything the
     // property attempt left behind.
@@ -622,14 +680,17 @@ bool MideaDriver::apply(const AcCommand& cmd, AcState& state) {
     return poll(state);
   }
 
-  // Outdoor silent is a property, so it is written with its own command rather
-  // than folded into the set-state frame below.
-  if (cmd.feature(Feature::OutSilent).has()) {
-    if (!writeOutSilent(cmd.feature(Feature::OutSilent).value, state)) return false;
-    out_silent_failures_ = 0;
-    // Nothing else asked for means we're done; fall through otherwise.
+  // The property-backed features are written with their own command family
+  // rather than folded into the set-state frame below.
+  bool wrote_properties = false;
+  if (!applyPropertyCommands(cmd, state, wrote_properties)) return false;
+  if (wrote_properties) {
+    property_failures_ = 0;
+    // If the command was only properties there is no state frame to send.
     AcCommand rest = cmd;
     rest.feature(Feature::OutSilent).clear();
+    rest.feature(Feature::IEco).clear();
+    rest.feature(Feature::SelfClean).clear();
     if (rest.empty()) return poll(state);
   }
 

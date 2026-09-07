@@ -81,6 +81,15 @@ size_t buildSetPropertyFrame(uint8_t* out, size_t cap, uint8_t message_id, uint1
   return buildCommandFrame(out, cap, kFrameControl, body, 5 + value_len, message_id);
 }
 
+size_t encodeIEcoValue(uint8_t* out, size_t cap, uint8_t ieco_number, bool on) {
+  if (out == nullptr || cap < kIEcoValueLen) return 0;
+  memset(out, 0, kIEcoValueLen);
+  out[0] = 0;  // ieco_frame, always zero in command.py
+  out[1] = ieco_number;
+  out[2] = on ? 1 : 0;
+  return kIEcoValueLen;
+}
+
 bool findProperty(const uint8_t* frame, size_t len, uint16_t prop, const uint8_t** value,
                   size_t* value_len) {
   if (value == nullptr || value_len == nullptr) return false;
