@@ -60,12 +60,30 @@ constexpr uint8_t kResponseIdPropertiesAck = 0xB0;  // reply to a set
 constexpr uint8_t kResponseIdProperties = 0xB1;     // reply to a query
 
 // command.py PropertyId. Only what this firmware actually drives.
+constexpr uint16_t kPropSelfClean = 0x0039;
 constexpr uint16_t kPropOutSilent = 0x00CD;  // "Portasplit outdoor silent mode"
+constexpr uint16_t kPropIEco = 0x00E3;
 
 // OUT_SILENT is not a plain boolean: command.py encodes on as 3 and decodes
 // with `data[0] == 3`. Writing 1 would read back as off.
 constexpr uint8_t kOutSilentOn = 0x03;
 constexpr uint8_t kOutSilentOff = 0x00;
+
+// SELF_CLEAN takes command.py's default encoding — a plain 0/1 read back from
+// data[0].
+constexpr uint8_t kSelfCleanOn = 0x01;
+constexpr uint8_t kSelfCleanOff = 0x00;
+
+// IECO is the awkward one. encode() writes [frame, ieco_number, switch] plus
+// ten trailing zero bytes, but decode() reads the switch back at data[1] — the
+// leading frame byte is only present on the way out. device.py supplies
+// ieco_number from the capabilities response and defaults it to 1.
+constexpr size_t kIEcoValueLen = 13;
+constexpr uint8_t kIEcoNumberDefault = 1;
+constexpr size_t kIEcoSwitchOffset = 1;  // where decode reads it back
+
+// Fills `out` with IECO's 13-byte value. Returns 0 if `cap` is too small.
+size_t encodeIEcoValue(uint8_t* out, size_t cap, uint8_t ieco_number, bool on);
 
 // GetPropertiesCommand — a QUERY frame listing the ids to read.
 size_t buildGetPropertiesFrame(uint8_t* out, size_t cap, uint8_t message_id,

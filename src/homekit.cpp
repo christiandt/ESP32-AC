@@ -380,6 +380,7 @@ void homekitBegin(const Config& cfg) {
         {Feature::Freeze, "Freeze Protection"}, {Feature::FollowMe, "Follow Me"},
         {Feature::SelfClean, "Self Clean"},
         {Feature::OutSilent, "Outdoor Silent"},
+        {Feature::IEco, "iECO"},
     };
     for (const FeatureLabel& fl : kLabels) {
       if (!drv->supportsFeature(fl.feature)) continue;
