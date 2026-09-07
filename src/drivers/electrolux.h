@@ -35,11 +35,14 @@ class ElectroluxDriver : public AcDriver {
   // reads it back afterwards.
   bool sendField(uint16_t command, const char* field, int value, AcState& state);
   bool requestStatus(AcState& state);
-  bool parseStatus(const char* json, AcState& state);
+  bool parseStatus(const char* json, size_t len, AcState& state);
 
   char name_[33];
   BroadlinkTransport tx_;
-  char raw_[512] = {0};
+  // The real WP71-265WT status reply is 532 bytes across 34 fields, so 512 was
+  // not enough; sized to match resp_ now. This is only the debug mirror served
+  // by GET /api/units/electrolux/raw — parsing reads the full payload.
+  char raw_[768] = {0};
   // Response scratch lives here rather than on the driver task's stack.
   uint8_t resp_[768] = {0};
 };

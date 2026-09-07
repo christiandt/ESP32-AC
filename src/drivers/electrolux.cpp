@@ -158,11 +158,14 @@ bool ElectroluxDriver::requestStatus(AcState& state) {
     return false;
   }
 
+  // Keep a copy for GET /api/units/electrolux/raw. Truncating it only costs
+  // some debug output; parsing below reads the untruncated payload, so a reply
+  // longer than raw_ no longer fails as malformed JSON.
   const size_t copy = payload_len < sizeof(raw_) - 1 ? payload_len : sizeof(raw_) - 1;
   memcpy(raw_, payload, copy);
   raw_[copy] = '\0';
 
-  return parseStatus(raw_, state);
+  return parseStatus(reinterpret_cast<const char*>(payload), payload_len, state);
 }
 
 // The status schema is not documented anywhere: electrolux-ac-cli never parses
@@ -171,9 +174,9 @@ bool ElectroluxDriver::requestStatus(AcState& state) {
 // a real reply is seen. Anything missing simply stays absent in AcState, and
 // the raw JSON is served from GET /api/units/electrolux/raw so the real names
 // can be confirmed in one request.
-bool ElectroluxDriver::parseStatus(const char* json, AcState& state) {
+bool ElectroluxDriver::parseStatus(const char* json, size_t len, AcState& state) {
   JsonDocument doc;
-  if (deserializeJson(doc, json) != DeserializationError::Ok || !doc.is<JsonObjectConst>()) {
+  if (deserializeJson(doc, json, len) != DeserializationError::Ok || !doc.is<JsonObjectConst>()) {
     state.setError("status was not valid JSON");
     return false;
   }
