@@ -10,6 +10,10 @@ namespace {
 
 bool g_started = false;
 
+// The HAP server's TCP port. Deliberately not 80: the REST API binds that
+// first, and HomeKit finds this port from the _hap._tcp SRV record anyway.
+constexpr uint16_t kHapPort = 1201;
+
 // How often characteristics are refreshed from the registry snapshot. The
 // drivers poll every 20 s, so this only needs to be fast enough that a change
 // made on the AC's own remote shows up promptly once the driver has seen it.
@@ -308,6 +312,13 @@ void homekitBegin(const Config& cfg) {
   // Hand HomeSpan the credentials too, so it can re-establish the connection on
   // its own if WiFi drops. main.cpp has already made the initial connection.
   if (cfg.wifi.valid()) homeSpan.setWifiCredentials(cfg.wifi.ssid, cfg.wifi.psk);
+  // HomeSpan defaults the HAP server to port 80, which the REST API has already
+  // bound by the time HomeSpan starts listening. The collision is silent: REST
+  // keeps answering, HomeSpan never gets the port, and pairing fails at
+  // "Accessory can't be reached" after the phone has resolved the address and
+  // connected. HAP has no fixed port — it is published in the service's SRV
+  // record — so move it and leave :80 to the documented REST API.
+  homeSpan.setPortNum(kHapPort);
   // The category is device-wide and only picks the pairing icon; see the header.
   homeSpan.begin(Category::Bridges, "ESP32-AC", "esp32-ac");
 
