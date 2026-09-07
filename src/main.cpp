@@ -22,24 +22,6 @@ constexpr uint32_t kWifiTimeoutMs = 20000;
 constexpr const char* kApSsid = "esp32-ac-setup";
 constexpr const char* kApPassword = "acsetup123";
 
-bool connectWifi(const WifiConfig& wifi) {
-  Serial.printf("Connecting to '%s' ...\n", wifi.ssid);
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);  // the driver tasks poll on a timer; latency > power here
-  WiFi.begin(wifi.ssid, wifi.psk);
-
-  const uint32_t deadline = millis() + kWifiTimeoutMs;
-  while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-    delay(250);
-  }
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi connect timed out.");
-    return false;
-  }
-  Serial.printf("Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-  return true;
-}
-
 // Drivers are built from stored config, so they outlive setup() and are
 // allocated once here rather than being globals that can't see the config.
 void registerDrivers(const Config& cfg) {
@@ -94,10 +76,41 @@ void setup() {
 
   registerDrivers(cfg);
 
-  if (cfg.wifi.valid() && connectWifi(cfg.wifi)) {
+  if (cfg.wifi.valid()) {
     restApiSetProvisioning(false);
-    g_registry.start();
+
+    // HomeSpan owns the station — we deliberately do not connect it ourselves.
+    //
+    // HomeSpan starts mDNS and the HAP server from Span::configureNetwork(),
+    // which runs only when its own `connected` counter first reaches 1: the
+    // first GOT_IP event it sees, and never again. If the station is already up
+    // when HomeSpan starts, its counter is still 0, so it calls WiFi.begin()
+    // regardless — and the event that races out of that transition arrives
+    // while localIP() is still 0.0.0.0. mDNS and the HAP server are then bound
+    // to nothing for the rest of the uptime, which shows up as an accessory
+    // stuck on "No response" in the Home app while the REST API carries on
+    // working perfectly. Disconnecting first isn't enough; only letting
+    // HomeSpan make the one and only connection avoids the race.
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);  // the driver tasks poll on a timer; latency > power here
     homekitBegin(cfg);
+
+    Serial.printf("Waiting for HomeSpan to join '%s' ...\n", cfg.wifi.ssid);
+    const uint32_t deadline = millis() + kWifiTimeoutMs;
+    while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+      homekitLoop();  // HomeSpan connects from its own poll loop
+      delay(50);
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.printf("Connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+      // Not fatal: HomeSpan keeps retrying, and the drivers back off until
+      // there is a route. Bad credentials no longer fall back to the setup AP,
+      // so recover by clearing NVS or re-provisioning over serial.
+      Serial.println("Still not connected — HomeSpan will keep retrying.");
+    }
+
+    g_registry.start();
   } else {
     startProvisioningAp();
     // Deliberately no driver tasks in provisioning mode: there is no route to
