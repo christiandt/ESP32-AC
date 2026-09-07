@@ -120,6 +120,7 @@ bool featureImplemented(Feature f) {
     case Feature::Freeze:
     case Feature::FollowMe:
     case Feature::Led:
+    case Feature::OutSilent:
       return true;
     default:
       return false;
@@ -502,6 +503,9 @@ void MideaDriver::publish(const MideaState& st, AcState& out) const {
   if (supportsFeature(Feature::FollowMe)) out.feature(Feature::FollowMe).set(st.follow_me);
   if (supportsFeature(Feature::Led)) out.feature(Feature::Led).set(st.display_on);
   if (supportsFeature(Feature::Beep)) out.feature(Feature::Beep).set(beep_);
+  if (supportsFeature(Feature::OutSilent) && has_out_silent_) {
+    out.feature(Feature::OutSilent).set(out_silent_);
+  }
   if (supportsFeature(Feature::Freeze) && st.has_freeze) {
     out.feature(Feature::Freeze).set(st.freeze_protection);
   }
@@ -514,6 +518,53 @@ void MideaDriver::publish(const MideaState& st, AcState& out) const {
     snprintf(buf, sizeof(buf), "unit reported error code %u", st.error_code);
     out.setError(buf);
   }
+}
+
+// Outdoor silent lives in the properties family rather than the state frame, so
+// it costs one extra exchange per poll. Only asked for when the unit's stored
+// capabilities say it has it.
+bool MideaDriver::readOutSilent(AcState& state) {
+  const uint16_t props[] = {kPropOutSilent};
+  uint8_t frame[64];
+  const size_t len = buildGetPropertiesFrame(frame, sizeof(frame), ++message_id_, props, 1);
+  if (len == 0) return false;
+
+  uint8_t reply[128];
+  size_t reply_len = 0;
+  if (!transact(frame, len, reply, sizeof(reply), &reply_len, state)) return false;
+
+  const uint8_t* value = nullptr;
+  size_t value_len = 0;
+  if (!findProperty(reply, reply_len, kPropOutSilent, &value, &value_len)) return false;
+
+  // command.py decodes this as `data[0] == 3`, not as a plain boolean.
+  out_silent_ = value[0] == kOutSilentOn;
+  has_out_silent_ = true;
+  return true;
+}
+
+bool MideaDriver::writeOutSilent(bool on, AcState& state) {
+  const uint8_t value[] = {on ? kOutSilentOn : kOutSilentOff};
+  uint8_t frame[64];
+  const size_t len = buildSetPropertyFrame(frame, sizeof(frame), ++message_id_, kPropOutSilent,
+                                           value, sizeof(value));
+  if (len == 0) {
+    state.setError("could not build out_silent frame");
+    return false;
+  }
+
+  uint8_t reply[128];
+  size_t reply_len = 0;
+  if (!transact(frame, len, reply, sizeof(reply), &reply_len, state)) return false;
+
+  // The unit acks with the value it accepted, so trust that over what we sent.
+  const uint8_t* echoed = nullptr;
+  size_t echoed_len = 0;
+  if (findProperty(reply, reply_len, kPropOutSilent, &echoed, &echoed_len)) {
+    out_silent_ = echoed[0] == kOutSilentOn;
+    has_out_silent_ = true;
+  }
+  return true;
 }
 
 bool MideaDriver::poll(AcState& state) {
@@ -536,6 +587,21 @@ bool MideaDriver::poll(AcState& state) {
 
   cached_ = st;
   has_cached_ = true;
+
+  // Best-effort: the state read already succeeded, so a unit that declines the
+  // property query stays online with out_silent simply absent.
+  if (supportsFeature(Feature::OutSilent) && out_silent_failures_ < kOutSilentGiveUp) {
+    if (readOutSilent(state)) {
+      out_silent_failures_ = 0;
+    } else if (++out_silent_failures_ >= kOutSilentGiveUp) {
+      log_w("[%s] out_silent property unanswered %u times; not asking again", id(),
+            static_cast<unsigned>(out_silent_failures_));
+    }
+    // The state read is what decides the poll's outcome, so clear anything the
+    // property attempt left behind.
+    state.clearError();
+  }
+
   publish(st, state);
   return true;
 }
@@ -554,6 +620,17 @@ bool MideaDriver::apply(const AcCommand& cmd, AcState& state) {
     // The reply is a state frame, but the display bit lags the flip; a fresh
     // poll is more trustworthy than parsing it.
     return poll(state);
+  }
+
+  // Outdoor silent is a property, so it is written with its own command rather
+  // than folded into the set-state frame below.
+  if (cmd.feature(Feature::OutSilent).has()) {
+    if (!writeOutSilent(cmd.feature(Feature::OutSilent).value, state)) return false;
+    out_silent_failures_ = 0;
+    // Nothing else asked for means we're done; fall through otherwise.
+    AcCommand rest = cmd;
+    rest.feature(Feature::OutSilent).clear();
+    if (rest.empty()) return poll(state);
   }
 
   SetState s;
