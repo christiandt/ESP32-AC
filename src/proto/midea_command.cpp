@@ -51,6 +51,75 @@ size_t buildCommandFrame(uint8_t* out, size_t cap, uint8_t frame_type, const uin
   return buildFrame(out, cap, frame_type, data, body_len + 2);
 }
 
+size_t buildGetPropertiesFrame(uint8_t* out, size_t cap, uint8_t message_id,
+                               const uint16_t* props, size_t count) {
+  // Two header bytes plus two per id, and the body has to stay inside the
+  // command-frame budget.
+  if (props == nullptr || count == 0 || 2 + count * 2 > kMaxBody) return 0;
+
+  uint8_t body[kMaxBody];
+  body[0] = kResponseIdProperties;
+  body[1] = static_cast<uint8_t>(count);
+  for (size_t i = 0; i < count; i++) {
+    body[2 + i * 2] = static_cast<uint8_t>(props[i] & 0xFF);
+    body[3 + i * 2] = static_cast<uint8_t>(props[i] >> 8);
+  }
+  return buildCommandFrame(out, cap, kFrameQuery, body, 2 + count * 2, message_id);
+}
+
+size_t buildSetPropertyFrame(uint8_t* out, size_t cap, uint8_t message_id, uint16_t prop,
+                             const uint8_t* value, size_t value_len) {
+  if (value == nullptr || value_len == 0 || 5 + value_len > kMaxBody) return 0;
+
+  uint8_t body[kMaxBody];
+  body[0] = kResponseIdPropertiesAck;
+  body[1] = 1;  // one property per frame is all this firmware needs
+  body[2] = static_cast<uint8_t>(prop & 0xFF);
+  body[3] = static_cast<uint8_t>(prop >> 8);
+  body[4] = static_cast<uint8_t>(value_len);
+  memcpy(body + 5, value, value_len);
+  return buildCommandFrame(out, cap, kFrameControl, body, 5 + value_len, message_id);
+}
+
+bool findProperty(const uint8_t* frame, size_t len, uint16_t prop, const uint8_t** value,
+                  size_t* value_len) {
+  if (value == nullptr || value_len == nullptr) return false;
+  if (!validateFrame(frame, len)) return false;
+  if (len < kFrameHeaderLen + 2) return false;
+
+  const uint8_t* payload = frame + kFrameHeaderLen;
+  const size_t payload_len = len - kFrameHeaderLen - 2;
+  if (payload_len < 2) return false;
+  if (payload[0] != kResponseIdProperties && payload[0] != kResponseIdPropertiesAck) return false;
+
+  // No payload CRC check here, unlike parseStateFrame. command.py skips it for
+  // this response type too — "except for properties which certain devices send
+  // invalid CRCs". The Porta Split is one of them: it sends 0x00. The frame
+  // checksum, already verified above, is what actually protects this reply.
+
+  // Entries are id(2) + result(1) + size(1) + value(size). An empty entry still
+  // occupies its four header bytes.
+  const size_t count = payload[1];
+  size_t off = 2;
+  for (size_t i = 0; i < count; i++) {
+    if (off + 4 > payload_len) return false;
+    const uint16_t id = static_cast<uint16_t>(payload[off] | (payload[off + 1] << 8));
+    const uint8_t result = payload[off + 2];
+    const size_t size = payload[off + 3];
+    if (off + 4 + size > payload_len) return false;
+
+    if (id == prop) {
+      // Bit 0x10 means the device rejected this property.
+      if (size == 0 || (result & 0x10) != 0) return false;
+      *value = payload + off + 4;
+      *value_len = size;
+      return true;
+    }
+    off += 4 + size;
+  }
+  return false;
+}
+
 size_t buildGetStateFrame(uint8_t* out, size_t cap, uint8_t message_id) {
   const uint8_t body[] = {
       0x41,                                // get state

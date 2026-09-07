@@ -10,6 +10,7 @@
 #include <unity.h>
 
 #include "proto/midea_command.h"
+#include "proto/midea_crc8.h"
 #include "proto/midea_frame.h"
 #include "proto/midea_packet.h"
 
@@ -320,4 +321,103 @@ void test_v3_parse_header_rejects_bad_magic(void) {
   unhexM("8370004e20c6", packet, sizeof(packet));
   packet[0] = 0x00;
   TEST_ASSERT_FALSE(parseV3Header(packet, kV3HeaderLen, &h));
+}
+
+// -- Properties --------------------------------------------------------------
+
+void test_get_out_silent_frame(void) {
+  const uint16_t props[] = {kPropOutSilent};
+  uint8_t frame[64];
+  const size_t len = buildGetPropertiesFrame(frame, sizeof(frame), 0x01, props, 1);
+  assertHex("aa10ac00000000000003b101cd000110b1", frame, len);
+}
+
+// OUT_SILENT writes 3 for on, not 1 — see command.py PropertyId.encode.
+void test_set_out_silent_on(void) {
+  const uint8_t value[] = {kOutSilentOn};
+  uint8_t frame[64];
+  const size_t len =
+      buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropOutSilent, value, sizeof(value));
+  assertHex("aa12ac00000000000002b001cd00010301dae3", frame, len);
+}
+
+void test_set_out_silent_off(void) {
+  const uint8_t value[] = {kOutSilentOff};
+  uint8_t frame[64];
+  const size_t len =
+      buildSetPropertyFrame(frame, sizeof(frame), 0x01, kPropOutSilent, value, sizeof(value));
+  assertHex("aa12ac00000000000002b001cd000100018f31", frame, len);
+}
+
+void test_find_property_reads_out_silent(void) {
+  uint8_t frame[64];
+  const uint8_t* value = nullptr;
+  size_t value_len = 0;
+
+  size_t len = unhexM("aa12ac00000000000003b101cd00000103615b", frame, sizeof(frame));
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropOutSilent, &value, &value_len));
+  TEST_ASSERT_EQUAL_size_t(1, value_len);
+  TEST_ASSERT_EQUAL_UINT8(kOutSilentOn, value[0]);
+
+  len = unhexM("aa12ac00000000000003b101cd00000100833c", frame, sizeof(frame));
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropOutSilent, &value, &value_len));
+  TEST_ASSERT_EQUAL_UINT8(kOutSilentOff, value[0]);
+}
+
+void test_find_property_rejects_absent_and_failed(void) {
+  uint8_t frame[64];
+  const uint8_t* value = nullptr;
+  size_t value_len = 0;
+
+  const size_t len = unhexM("aa12ac00000000000003b101cd00000103615b", frame, sizeof(frame));
+
+  // A property the frame doesn't carry.
+  TEST_ASSERT_FALSE(findProperty(frame, len, 0x00E3, &value, &value_len));
+
+  // The device flags a failed property with bit 0x10 in the result byte.
+  uint8_t failed[64];
+  memcpy(failed, frame, len);
+  failed[kFrameHeaderLen + 4] |= 0x10;
+  failed[len - 2] = crc8(failed + kFrameHeaderLen, len - kFrameHeaderLen - 2);
+  failed[len - 1] = frameChecksum(failed + 1, len - 2);
+  TEST_ASSERT_FALSE(findProperty(failed, len, kPropOutSilent, &value, &value_len));
+
+  // A state response is not a properties response.
+  uint8_t state[64];
+  const size_t state_len =
+      unhexM("aa21ac00000000000004c00146660000000c000000636e00000000000028000007b6", state,
+             sizeof(state));
+  TEST_ASSERT_FALSE(findProperty(state, state_len, kPropOutSilent, &value, &value_len));
+}
+
+void test_property_frames_reject_small_buffer(void) {
+  const uint16_t props[] = {kPropOutSilent};
+  const uint8_t value[] = {kOutSilentOn};
+  uint8_t small[8];
+  TEST_ASSERT_EQUAL_size_t(0, buildGetPropertiesFrame(small, sizeof(small), 1, props, 1));
+  TEST_ASSERT_EQUAL_size_t(0, buildSetPropertyFrame(small, sizeof(small), 1, kPropOutSilent,
+                                                    value, sizeof(value)));
+}
+
+// Captured from the real Porta Split. Note the payload CRC byte is 0x00, which
+// is wrong — command.py skips the CRC check for property responses for exactly
+// this reason, so this frame must parse rather than be rejected.
+void test_find_property_accepts_real_device_reply(void) {
+  uint8_t frame[64];
+  const size_t len =
+      unhexM("aa14ac00000000000803b101cd00000103000000b2", frame, sizeof(frame));
+  TEST_ASSERT_EQUAL_size_t(21, len);
+
+  const uint8_t* value = nullptr;
+  size_t value_len = 0;
+  TEST_ASSERT_TRUE(findProperty(frame, len, kPropOutSilent, &value, &value_len));
+  TEST_ASSERT_EQUAL_size_t(1, value_len);
+  TEST_ASSERT_EQUAL_UINT8(kOutSilentOn, value[0]);
+
+  // A corrupt *frame* checksum must still be caught — that check is what is
+  // actually protecting this reply.
+  uint8_t bad[64];
+  memcpy(bad, frame, len);
+  bad[len - 1] ^= 0xFF;
+  TEST_ASSERT_FALSE(findProperty(bad, len, kPropOutSilent, &value, &value_len));
 }

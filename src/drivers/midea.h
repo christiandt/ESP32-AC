@@ -105,6 +105,19 @@ class MideaDriver : public AcDriver {
   bool has_cached_ = false;
   bool beep_ = true;
 
+  // Outdoor silent is a *property*, not a bit in the state frame, so it is read
+  // and written with its own command and cached separately.
+  bool out_silent_ = false;
+  bool has_out_silent_ = false;
+  // A failed property read costs a session drop inside transact(), so stop
+  // asking after a few consecutive failures rather than reconnecting on every
+  // poll for a feature the unit evidently won't discuss.
+  uint8_t out_silent_failures_ = 0;
+  static constexpr uint8_t kOutSilentGiveUp = 3;
+
+  bool readOutSilent(AcState& state);
+  bool writeOutSilent(bool on, AcState& state);
+
   uint8_t tx_[kBuf];
   uint8_t rx_[kBuf];
   uint8_t scratch_[kBuf];

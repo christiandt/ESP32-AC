@@ -101,8 +101,11 @@ def discovery_packet(local_ip: str, src_port: int, datetime_block: bytes = bytes
 
 def midea_vectors() -> Dict[str, Any]:
     try:
+        import struct
+
         import msmart.crc8 as crc8
-        from msmart.device.AC.command import (Command, GetStateCommand, Response,
+        from msmart.device.AC.command import (Command, GetPropertiesCommand, GetStateCommand,
+                                              PropertyId, Response, SetPropertiesCommand,
                                               SetStateCommand, ToggleDisplayCommand)
         from msmart.frame import Frame
         from msmart.lan import Security, _Packet
@@ -167,6 +170,33 @@ def midea_vectors() -> Dict[str, Any]:
     alt.freeze_protection = alt.follow_me = alt.purifier = False
     alt.target_humidity = 40
     v["set_state_alternate_temp"] = build(alt, 1).hex()
+
+    # Properties — the second command family, which is where OUT_SILENT lives.
+    # Note it is not a plain boolean: encode() writes 3 for on, and decode()
+    # tests `data[0] == 3`.
+    v["get_out_silent_frame"] = build(GetPropertiesCommand([PropertyId.OUT_SILENT]), 1).hex()
+    v["set_out_silent_on"] = build(SetPropertiesCommand({PropertyId.OUT_SILENT: True}), 1).hex()
+    v["set_out_silent_off"] = build(SetPropertiesCommand({PropertyId.OUT_SILENT: False}), 1).hex()
+
+    # A properties response, wrapped as a device would send it. Decoded with
+    # msmart's own parser before it is allowed to become a fixture.
+    def properties_frame(value: int) -> bytes:
+        body = bytearray([0xB1, 1])
+        body += struct.pack("<H", PropertyId.OUT_SILENT)
+        body += bytes([0x00, 0x01, value])  # result ok, size 1, value
+        payload = bytes(body) + bytes([crc8.calculate(bytes(body))])
+        header = bytearray(10)
+        header[0], header[1], header[2], header[9] = 0xAA, len(payload) + 10, 0xAC, 0x03
+        frame = bytearray(header + payload)
+        frame.append(Frame.checksum(frame[1:]))
+        return bytes(frame)
+
+    on_frame = properties_frame(0x03)
+    off_frame = properties_frame(0x00)
+    assert Response.construct(on_frame).get_property(PropertyId.OUT_SILENT) is True
+    assert Response.construct(off_frame).get_property(PropertyId.OUT_SILENT) is False
+    v["properties_out_silent_on"] = on_frame.hex()
+    v["properties_out_silent_off"] = off_frame.hex()
 
     # A state response, wrapped exactly as a device would.
     p = bytearray(22)

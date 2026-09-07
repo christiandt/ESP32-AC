@@ -379,6 +379,7 @@ void homekitBegin(const Config& cfg) {
         {Feature::Sleep, "Sleep"},     {Feature::Ion, "Ion"},
         {Feature::Freeze, "Freeze Protection"}, {Feature::FollowMe, "Follow Me"},
         {Feature::SelfClean, "Self Clean"},
+        {Feature::OutSilent, "Outdoor Silent"},
     };
     for (const FeatureLabel& fl : kLabels) {
       if (!drv->supportsFeature(fl.feature)) continue;

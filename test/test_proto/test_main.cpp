@@ -83,6 +83,13 @@ void test_parse_state_frame(void);
 void test_parse_state_rejects_bad_payload_crc(void);
 void test_parse_state_rejects_wrong_response_id(void);
 void test_parse_state_rejects_truncated(void);
+void test_get_out_silent_frame(void);
+void test_set_out_silent_on(void);
+void test_set_out_silent_off(void);
+void test_find_property_reads_out_silent(void);
+void test_find_property_rejects_absent_and_failed(void);
+void test_property_frames_reject_small_buffer(void);
+void test_find_property_accepts_real_device_reply(void);
 void test_v2_header(void);
 void test_v2_parse(void);
 void test_v2_parse_rejects_truncated_and_bad_start(void);
@@ -138,6 +145,14 @@ int main(int, char**) {
   RUN_TEST(test_parse_state_rejects_bad_payload_crc);
   RUN_TEST(test_parse_state_rejects_wrong_response_id);
   RUN_TEST(test_parse_state_rejects_truncated);
+
+  RUN_TEST(test_get_out_silent_frame);
+  RUN_TEST(test_set_out_silent_on);
+  RUN_TEST(test_set_out_silent_off);
+  RUN_TEST(test_find_property_reads_out_silent);
+  RUN_TEST(test_find_property_rejects_absent_and_failed);
+  RUN_TEST(test_property_frames_reject_small_buffer);
+  RUN_TEST(test_find_property_accepts_real_device_reply);
 
   RUN_TEST(test_v2_header);
   RUN_TEST(test_v2_parse);
